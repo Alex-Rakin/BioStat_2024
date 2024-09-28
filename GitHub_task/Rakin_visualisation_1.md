@@ -234,11 +234,11 @@ hogwarts |>
   filter(course == 5) |> 
   mutate(id = as.factor(id)) |> 
   ggplot()+
-  geom_segment(aes(y = fct_reorder(id, result, .desc = TRUE), 
-                   yend = fct_reorder(id, result, .desc = TRUE), 
+  geom_segment(aes(y = fct_reorder(id, result, .desc = FALSE), 
+                   yend = fct_reorder(id, result, .desc = FALSE), 
                    x = 0, 
                    xend = result))+
-  geom_point(aes(y = fct_reorder(id, result, .desc = TRUE), 
+  geom_point(aes(y = fct_reorder(id, result, ), 
                  x = result, col= wandCore), 
               size = 3)+
    labs(x = "итоговый балл",

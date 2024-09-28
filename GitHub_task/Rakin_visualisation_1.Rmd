@@ -2,10 +2,10 @@
 title: "base_visualisation_R_1"
 author: "RAkin ALex"
 date: "2024-09-20"
-output: html_document
-editor_options: 
-  markdown: 
-    wrap: 72
+output: 
+  html_document:
+    keep_md: true
+
 ---
 
 ```{r setup, include=FALSE}
@@ -204,11 +204,11 @@ hogwarts |>
   filter(course == 5) |> 
   mutate(id = as.factor(id)) |> 
   ggplot()+
-  geom_segment(aes(y = fct_reorder(id, result, .desc = TRUE), 
-                   yend = fct_reorder(id, result, .desc = TRUE), 
+  geom_segment(aes(y = fct_reorder(id, result, .desc = FALSE), 
+                   yend = fct_reorder(id, result, .desc = FALSE), 
                    x = 0, 
                    xend = result))+
-  geom_point(aes(y = fct_reorder(id, result, .desc = TRUE), 
+  geom_point(aes(y = fct_reorder(id, result, ), 
                  x = result, col= wandCore), 
               size = 3)+
    labs(x = "итоговый балл",
