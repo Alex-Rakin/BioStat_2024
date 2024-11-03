@@ -1,0 +1,228 @@
+---
+title: "RAkin_ specifics_of_medical_data"
+author: "RAkin ALex"
+date: "2024-10-31"
+output:
+  
+  html_document:
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(flextable)
+library(rstatix)
+library(pROC)
+library(gtsummary)
+library(skimr)
+
+
+
+```
+
+## Загрузка и проверка датасета
+
+```{r }
+trauma_data <- readxl::read_excel("data/trauma.xlsx")
+# Изменим единицы измерения роста и масы тела пациента на м и кг.
+### Почему-то версия кода с пайпом не работает
+# trauma_data %>%
+#   mutate(Height_cm = Height %>% gsub("\"", "") %>% as.numeric())
+  
+trauma_data %>% 
+  mutate(Height = as.numeric(gsub("\"", "", Height) ) * 2.54 / 100,
+         Weight = Weight / 2.2,
+         Sex = as.factor(Sex),
+         Death = as.factor(Death),
+         ) -> trauma_data
+
+
+# Переменная FOUR может иметь 0 в значении. Однако переменная Hb  - не может иметь 0(получается что у пациента совсем не было гемоглобина). Подставим в наблюдения где Hb == 0 значение NA
+trauma_data$Hb <- na_if(trauma_data$Hb,  0)
+
+
+
+
+
+```
+
+## Задание 1
+
+Дайте описательную статистику для переменных, включённых в датасет. Дополнительно рассчитайте, у какого количества пациентов и в каком проценте случаев у пациентов был снижен уровень гемоглобина? Используйте следующие референтные значения (Мужчины: 13.5--16 г/дл, Женщины: 12--14 г/дл).
+
+```{r}
+# описательные статистики
+
+skimr::skim(trauma_data)
+```
+
+```{r}
+# Дополнительно рассчитайте у какого количества пациентов и в каком проценте случаев у пациентов был снижен уровень гемоглобина?
+# Для этого введем новую переменную low_HB и применим функцию case_when, так как будем задачать несколько условий одновременно.
+
+trauma_data %>%
+  filter(!is.na(Hb)) %>%
+  mutate(Low_HB = case_when(
+    Sex == "Male" & Hb <= 13.5 ~ TRUE,
+    Sex == "Female" & Hb <= 12 ~ TRUE,
+    .default = FALSE
+  )) %>%
+  group_by(Sex) %>%
+  # Расчитаем общее количество пациентов и процент пациетов с низким гемоглобином
+  summarise(
+    n = n(),
+    count_lowHb_patients = sum(Low_HB),
+    percent_lowHb_patients = round(sum(Low_HB) / n * 100, 2),
+    
+  ) %>%
+  ungroup() %>%
+  # Теперь добавим сторчку  "всего"
+  bind_rows(
+    summarise(
+      . ,
+      Sex = "Total*",
+      count_lowHb_patients = sum(count_lowHb_patients),
+      percent_lowHb_patients = round(sum(count_lowHb_patients) / sum(n) * 100, 2),
+      n = sum(n)
+    )
+  ) %>%
+  flextable() %>%
+  theme_box() %>%
+  color(color = "black") %>%
+  align(align = "center", part = "all") %>% 
+  add_footer_lines("*16 missing values")
+
+
+```
+
+## Задание 2
+
+Рассчитайте индекс массы тела у пациентов (кг / м2). Каков был средний (M (SD)) уровень ИМТ у пациентов, включённых в исследование? Какая доля пациентов имела ожирение (ИМТ \> 30)
+
+```{r}
+# для ответа нужно сделать новую переменную body mass index, BMI
+trauma_data %>% 
+  mutate(BMI = Weight / (Height^2))-> trauma_data 
+tibble(
+  "Mean BMI" = round(mean(trauma_data$BMI, na.rm = TRUE),2),
+  "Sd BMI" = round(sd(trauma_data$BMI, na.rm = TRUE),2),
+  "% obesity" = round(sum(trauma_data$BMI > 30, na.rm = TRUE)/NROW(trauma_data$BMI)*100, 2)
+)%>%
+  flextable() %>%
+  theme_box() %>%
+  color(color = "black") %>%
+  align(align = "center", part = "all") %>% 
+  add_footer_lines("n patients = 1024")
+  
+```
+
+## Задание 3
+
+Как выглядит ROC-кривая для предсказания летального исхода в течение 24 часов по переменной, характеризующей уровень гемоглобина? Постройте график. Чем может быть обусловлена такая форма кривой?
+
+```{r}
+roc_curve_Hb <- roc(Death ~ Hb, 
+                   data = trauma_data,
+                   ci = TRUE)
+
+roc_curve_Hb
+
+roc_curve_Hb %>% 
+    ggroc() + 
+    theme_bw()
+
+### ROC- кривая близка к  диагонали, а  AUC 0.71, что свидетельствует о низком предсказании данной модели. 
+```
+
+## Задание 4
+
+Чему равна площадь под ROC-кривой, которую вы построили в вопросе 3? Чему равен 95% двусторонний ДИ для площади под ROC-кривой, которую вы построили в вопросе 3?
+
+```{r }
+tibble(
+  AUC = roc_curve_Hb$auc, 
+  CI_min = roc_curve_Hb$ci[1], 
+  CI_max = roc_curve_Hb$ci[3]
+)
+
+```
+
+## Задание 5
+
+Проведите ROC-анализ и определите, какое пороговое значение является оптимальным для предсказания летального исхода в течение 24 часов по шкале комы Глазго. Какой чувствительностью и специфичностью обладает данный порог?
+
+```{r}
+
+roc_curve_GSC <- roc(Death ~ GSC, 
+                   data = trauma_data,
+                   ci = TRUE)
+
+roc_curve_GSC 
+
+roc_curve_GSC %>% 
+    ggroc() + 
+    theme_bw()
+
+# Найдем "лучшие" координаты 
+
+roc_curve_GSC  %>% coords(x = "best", best.method = "closest.topleft")
+```
+
+7.5 оптимальное значение для предсказания летального исхода в течение 24 часов по шкале комы Глазго. (При данном значении чувствительность и специфичной модели будет максимальными)
+
+## Задание 6
+
+Какая из количественных переменных в датасете (включая рассчитанный вами ранее ИМТ) обладает наибольшей площадью под ROC-кривой? Как вы можете интерпретировать это знание? Какая количественная переменная имеет наименьшую площадь?
+
+```{r}
+###### Дополнение. На занятии мы ввели новую переменную - среднее АД, давайте введем ее и решение
+
+trauma_data <- trauma_data %>% 
+  mutate(MeanBP = (DBP + 1/3 * (SBP - DBP)) %>% round(2))
+
+# Изменим датасет и найдем AUC у всех количественных переменных
+roc_curve_all <- trauma_data %>% 
+  select(Death, where(is.numeric) & -c(id)) %>% 
+  pivot_longer(cols = !Death) %>% 
+  group_by(name) %>% 
+  # ci[2] - это сам AUC, ci[1] и ci[3] - 95 % ДИ
+  summarise(AUC = roc(Death, value, ci = T)$ci[2] %>% round(3),
+              AUC_min = roc(Death, value, ci = T)$ci[1] %>% round(3),
+              AUC_max = roc(Death, value, ci = T)$ci[3] %>% round(3))
+
+roc_curve_all
+
+
+#### теперь найдем переменную с максимальным и миниммаьным AUC
+
+cat("Наибольшей площадью под ROC-кривой обладает переменная:",  
+    roc_curve_all %>%
+    filter(AUC == max(AUC)) %>%
+    pull(name), 
+    ". AUC = ",  
+    roc_curve_all %>%
+    filter(AUC == max(AUC)) %>% 
+       pull(AUC), "\n\n")
+
+#### Можно автоматизировать, но надо писть функцию.
+ roc_curve_FOUR <- roc(Death ~ FOUR,
+    data = trauma_data,
+    ci = TRUE) 
+roc_curve_FOUR %>%
+  coords(x = "best", best.method = "closest.topleft")
+
+
+cat("Наименьшей площадью под ROC-кривой обладает переменная:",  
+    roc_curve_all %>%
+    filter(AUC == min(AUC)) %>%
+    pull(name), 
+    ". AUC = ",  
+    roc_curve_all %>%
+    filter(AUC == min(AUC)) %>% 
+       pull(AUC))
+```
+
+Наибольшей площадью под ROC-кривой обладает переменная: FOUR . AUC =  0.934  Возможно это связано с тем , что данная шкала "имеет преимущества перед шкалой комы Глазго, а именно: точнее детализирует неврологический статус, распознает синдром запертого человека, дает оценку рефлексам ствола мозга, дает оценку дыхательному паттерну, выявляет различные стадии дислокации (вклинения) мозга"
+
+Наименьшей площадью под ROC-кривой обладает переменная: Height . AUC =  0.482 (Врядли рост как либо будет Смертность) 
