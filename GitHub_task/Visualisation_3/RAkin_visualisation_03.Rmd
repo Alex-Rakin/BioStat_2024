@@ -1,0 +1,509 @@
+---
+title: "visualisation_03"
+author: "RAkin ALex"
+date: "2024-11-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# install.packages(c("stats", "cluster", "factoextra", "clustertend", "dendextend", "NbClust", "fpc", "dbscan"))
+
+
+
+library(stats)
+library(cluster)
+library(factoextra)
+library(clustertend)
+library(dendextend)
+library(NbClust)
+library(fpc)
+library(dbscan)
+library(skimr)
+library(tidyverse)
+library(ggpubr)
+library(ggExtra)
+library(GGally)
+library(rstatix)
+library(gridExtra)
+library(corrr)
+library(ggfortify)
+library(pheatmap)
+
+library(FactoMineR)
+library(ggbiplot) #devtools::install_github("vqv/ggbiplot")
+library(plotly)
+library(tidymodels)
+library(embed)
+```
+
+## Задание 01.
+
+Загрузите датасет very_low_birthweight.RDS (лежит в папке домашнего задания). Это данные о 671 младенце с очень низкой массой тела (\<1600 грамм), собранные в Duke University Medical Center доктором Майклом О'Ши c 1981 по 1987 г. Описание переменных см. здесь. Переменными исхода являются колонки 'dead', а также время от рождения до смерти или выписки (выводятся из 'birth' и 'exit'. 7 пациентов были выписаны до рождения). Сделайте копию датасета, в которой удалите колонки с количеством пропусков больше 100, а затем удалите все строки с пропусками.
+
+```{r dounload}
+# Загузка датасета
+very_low_birthw <- readRDS("very_low_birthweight.RDS")
+head(very_low_birthw)
+
+# Сделайте копию датасета, в которой удалите колонки с количеством пропусков больше 100, а затем удалите все строки с пропусками. 
+# Удалить переменные можно, введя новую переменную, где будут указаны названия столбцов с пропуском более 100 наблюдений
+
+na_names <- tibble(
+  var = names(very_low_birthw),
+  na.count= colSums(is.na(very_low_birthw))) %>% 
+  filter(na.count > 100) 
+
+very_low_birthw2 <- very_low_birthw %>% 
+  select(-na_names$var) %>% 
+  na.omit()
+
+# Или можно просто выбрать переменные где меньше 100 пропусков, а потом удалить наблюдения где есть NA
+
+# very_low_birthw3 <- very_low_birthw %>% 
+#   select_if(function(x) sum(is.na(x)) < 100) %>% 
+#   na.omit()
+
+
+  
+
+
+
+
+```
+
+## Задание 02.
+
+2.  Постройте графики плотности распределения для числовых переменных. Удалите выбросы, если таковые имеются. Преобразуйте категориальные переменные в факторы. Для любых двух числовых переменных раскрасьте график по переменной 'inout'.
+
+```{r  desteny_plot and factors, fig.width=10, fig.height=10}
+# В начале Уберем даты и добавим переменную Id, затем преобразуем категориальные переменные в факторы. Так как мы загрузили RDS-файл, то часть работы сделали до нас. 
+very_low_birthw2 <- very_low_birthw2 %>% 
+  select(-c(year, birth, exit)) %>% 
+  mutate(ID = as.factor(row_number())) %>% 
+  mutate(
+    across(dead, function(x)
+      x %>% factor(
+        levels = c(0, 1),
+        labels = c("No", "Yes")
+      )),
+    across(twn, function(x)
+      x %>% factor(
+        levels = c(0, 1),
+        labels = c("No", "Yes")
+      )),
+    across(vent, function(x)
+      x %>% factor(
+        levels = c(0, 1),
+        labels = c("No", "Yes")
+      )),
+    across(pneumo, function(x)
+      x %>% factor(
+        levels = c(0, 1),
+        labels = c("No", "Yes")
+      )),
+    across(pda, function(x)
+      x %>% factor(
+        levels = c(0, 1),
+        labels = c("No", "Yes")
+      )),
+    across(cld, function(x)
+      x %>% factor(
+        levels = c(0, 1),
+        labels = c("No", "Yes")
+      ))
+  ) %>% 
+  select(ID, everything())
+
+# Время убрать ВЫБРОСЫ! 
+# Выбросами считаются значения, которые находятся за пределами 1.5 IQR от первого и третьего квартилей.
+
+
+# для удаления выбросов можно воспользоваться воспользоваться функцией filter()
+very_low_birthw2_outlier <- very_low_birthw2 %>% 
+filter( across(where(is.numeric) & !dead,
+                  function(.) between(., quantile(., 0.25) - 1.5 * IQR(.), quantile(., 0.75) + 1.5 * IQR(.)) ))
+
+
+
+
+
+##################################################
+
+# Затем построим графики плотности распределения для числовых переменных
+# создадим функцию которая за нас будет все делать
+
+fun_density_plot <- function(df, num_var) {
+  density_plot <- ggplot(df, aes(x = .data[[num_var]])) +
+    geom_density() +
+    
+    theme_bw()
+  # theme(legend.position = "bottom")
+  
+  
+  
+  return(density_plot)
+}
+
+# вторая функция будет еще раскрашивать график по переменной ‘inout’
+fun_density_plot2 <- function(df, num_var) {
+  density_plot <- ggplot(df,
+                         aes(x = .data[[num_var]])) +
+    geom_density(aes(fill = inout),
+                 alpha = 0.5) +
+    
+    theme_bw() +
+    theme(legend.position = "bottom")
+  
+  
+  
+  return(density_plot)
+}
+
+c("hospstay", "lowph", "bwt" ,  "gest")  %>%
+  map(function(num_var)
+    fun_density_plot(very_low_birthw2_outlier,
+                     num_var)) -> List_density_plot
+
+c("pltct", "apg1") %>%
+  map(function(num_var)
+    fun_density_plot2(very_low_birthw2_outlier,
+                      num_var)) -> List_density_plot2
+
+
+
+ggarrange(plotlist = c(List_density_plot, List_density_plot2),
+          ncol = 3,
+          nrow = 2)
+
+
+
+```
+
+## Задание 03.
+
+3.  Проведите тест на сравнение значений колонки 'lowph' между группами в переменной inout. Вид статистического теста определите самостоятельно. Визуализируйте результат через библиотеку 'rstatix'. Как бы вы интерпретировали результат, если бы знали, что более низкое значение lowph ассоциировано с более низкой выживаемостью?
+
+```{r}
+# Для начала выберем тест которым сравним выборки. Можно использовать t_test или  wilcox_test. Что бы определиться посмотрим на нормальность распределния, если хотя бы одна из выборок будет распределенеа не нормально используем wilcox_test.
+
+## Проверка на нормальность
+
+
+stat_table1 <- very_low_birthw2_outlier %>%
+  select(lowph, inout) %>%
+  group_by(inout) %>%
+  summarise(p_value = shapiro.test(lowph)$p.value %>% 
+              round(4)) %>%
+  mutate(`вывод` = ifelse(p_value < 0.05,
+                          "Отвергаем H0, распреденение не является нормальным.",
+                          "НЕ отвергаем H0, распреденение является нормальным.")) 
+  
+plot1 <- very_low_birthw2_outlier %>%
+  ggplot()+
+  geom_histogram(aes(lowph),
+                 bins = 15,
+                 col = "black",
+                 fill="salmon")+
+  
+  theme_bw()+
+   facet_wrap( vars(inout),  scales = "free_y")+
+   labs(title = "Распределение наблюдений lowph по группам inout")
+
+
+grid.arrange(plot1, tableGrob(stat_table1,  rows = NULL), ncol = 1)
+
+
+
+
+```
+
+
+```{r}
+# Так как одна из выборок имеет не нормальный характер распределения, то воспользуемся для сравления выборок wilcox_test
+stat_table2 <- very_low_birthw2_outlier %>% 
+  rstatix::wilcox_test(lowph ~ inout)
+
+# Визуализируем данные
+plot2<- ggplot(very_low_birthw2_outlier,
+       aes(x = inout, y = lowph)) +
+  geom_boxplot(aes(fill = inout)) +
+  stat_compare_means( label = "p.format") +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    plot.title =element_text( hjust = 0.5 )
+  )+
+  labs(title = "Сравнение lowph по группам inout, wilcox_test",
+       y = "lowph")
+
+grid.arrange(plot2, tableGrob(stat_table2,  rows = NULL), ncol = 1, heights  = c(3, 1))
+
+
+```
+
+Если более низкое значение lowph ассоциировано с более низкой выживаемостью, то можно сделать вывод, что в группе "transported" более низкая выживаемость.
+
+
+
+## Задание 04
+Сделайте новый датафрейм, в котором оставьте только континуальные или ранговые данные, кроме 'birth', 'year' и 'exit'. Сделайте корреляционный анализ этих данных. Постройте два любых типа графиков для визуализации корреляций..
+
+```{r ,  fig.width=16, fig.height=16 }
+# Как здорово, что я уже создал датафрейм без' birth', 'year' и 'exit'. Теперь сделаем кореляционный анализ 
+
+# Посотрим матрицу графиков, Воспользуемся функцией данной нам Дмитрией Серебренниковым 
+lowerFn <- function(data, mapping, method = "lm", ...) {
+  p <- ggplot(data = data, mapping = mapping) +
+    # geom_point(colour = "blue") +
+    geom_smooth(method = method, color = "red", ...)
+  p
+}
+
+very_low_birthw2_outlier %>% 
+  select(where(is.numeric) & !ID) %>% 
+  ggpairs(
+     lower = list(continuous = wrap(lowerFn, method = "lm")),
+  diag = list(continuous = wrap("barDiag", colour = "blue")),
+  upper = list(continuous = wrap("cor", size = 5))
+  )
+
+
+
+```
+
+```{r}
+very_low_birthw2_outlier %>% 
+  select(where(is.numeric) & !ID) %>% 
+  cor() %>% corrplot(method = "number")
+```
+
+```{r}
+very_low_birthw2_outlier %>% 
+  select(where(is.numeric) & !ID ) %>% 
+  cor() %>% network_plot(min_cor = 0.2)
+```
+
+
+## Задание 05.	
+
+Постройте иерархическую кластеризацию на этом датафрейме.
+
+```{r}
+#  Подберем количество кластеров 
+vlb2out_scale<- very_low_birthw2_outlier %>% 
+  select(where(is.numeric) & !ID & !dead) %>% 
+  scale() 
+  
+  
+NbClust(vlb2out_scale, 
+              distance = "euclidean", 
+              min.nc = 2, # Минимальное число кластеров
+              max.nc = 10, # Максимальное
+              method = "kmeans")
+  
+fviz_nbclust(vlb2out_scale, 
+             kmeans,
+             nstart = 25,
+             method = "gap_stat",
+             nboot = 100)
+
+```
+
+Анализ показал, что данные лучше разбить на 2 кластера
+
+
+```{r}
+
+vlb2out_dist.hc <- vlb2out_scale %>% 
+  dist(method = "euclidean") %>% 
+  hclust( method = "ward.D2")
+
+
+fviz_dend(vlb2out_dist.hc, 
+         k = 2, # Задаём число кластеров
+          cex = 0.5, # Задаем размер лейблов
+          k_colors = c("#2E9FDF", "#FC4E07"),
+          color_labels_by_k = TRUE, # Соотнести цвета с кластерами
+          rect = TRUE # Добавить "квадратик" вокруг групп
+)
+```
+
+
+
+## Задание 06.	
+
+	Сделайте одновременный график heatmap и иерархической кластеризации. Интерпретируйте результат.
+
+```{r}
+
+very_low_birthw2_outlier %>% 
+  select(where(is.numeric) & !ID & !dead) %>% 
+  scale() %>% 
+  pheatmap( 
+         show_rownames = FALSE, 
+         clustering_distance_rows = (very_low_birthw2_outlier %>% 
+                                       select(where(is.numeric) & !ID & !dead ) %>% 
+                                       scale() %>% dist()),
+         clustering_method = "ward.D2", 
+         cutree_rows = 2, # выбрано из предыдущего анализа
+         cutree_cols = length(very_low_birthw2_outlier %>%
+                                select(where(is.numeric) & !ID & !dead ) %>%
+                                colnames()),
+         angle_col = 45, 
+         main = "Одновременный график heatmap и иерархической кластеризации")
+
+```
+Интерпритация:
+  1. По переменным. Наиболее близко стоят переменныме "bwt", "gest" (кор. 0.68), что собственно логично чем раньше родился ребенок, тем меньшую массу он будет иметь.
+  2. По наблюдениям. имеется взаимосязь между переменными. чем дольше ребенок провел в больнице, тем меньше его вес , тем раньше он родился и меньше баллов по шкале апгар набрал  и меньше pH.
+
+
+
+## Задание 07.	
+7.	Проведите PCA анализ на этих данных. Проинтерпретируйте результат. Нужно ли применять шкалирование для этих данных перед проведением PCA?
+
+```{r}
+# Шкалирование нужно обязательно выполнить, что бы избежать путаницы с размерностью. Как можно сравнивать например кол-во недель и кг?
+
+# Так как тут уже шкалированные данные то scale = FALSE.
+ vlb2out_scale.pca <- vlb2out_scale %>% 
+  prcomp(  scale = FALSE) 
+
+  summary(vlb2out_scale.pca)
+  
+  
+fviz_pca_var(vlb2out_scale.pca, 
+             col.var = "contrib",
+             gradient.cols = c("#2E9FDF", "#df7878"))
+
+
+fviz_contrib(vlb2out_scale.pca,
+             choice = "var",
+             axes = 1)
+
+fviz_contrib(vlb2out_scale.pca,
+             choice = "var",
+             axes = 2) 
+
+
+
+
+```
+
+
+Интерпретация: Первые две PC объясняют 61% дисперсии. В PC1 вносят вклад переменные "bwt", "gest",  "hospstay". В PC2 вносят вклад переменные "pltct" ,  "apg1"
+
+
+## Задание 08.	
+8.	Постройте biplot график для PCA. Раскрасьте его по значению колонки 'dead'.
+
+```{r,  fig.width=8, fig.height=8 }
+
+
+biplot01 <- ggbiplot(vlb2out_scale.pca, 
+         scale=0, 
+         groups = very_low_birthw2_outlier$dead, 
+         ellipse = T,
+         alpha =0.1)+
+    theme_minimal()
+
+biplot01
+```
+
+
+## Задание 09.	
+9.	Переведите последний график в 'plotly'. При наведении на точку нужно, чтобы отображалось id пациента.
+
+```{r}
+
+# plotly создадим добавив слой с  geom_point и добавим к нему в аэстетику 
+
+plot3 <- biplot01 + 
+
+  geom_point(data= biplot01$data,
+             aes(color = groups,
+                 text = very_low_birthw2_outlier$ID), # Создание текстового слоя
+             alpha=0.1)+
+  labs(title = "Biplot with ID")
+
+ggplotly(plot3, tooltip = c("text"))
+```
+
+
+## Задание 10.	
+10.	Дайте содержательную интерпретацию PCA анализу. Почему использовать колонку 'dead' для выводов об ассоциации с выживаемостью некорректно? 
+
+```{r}
+# Интерпретация: Первые две PC объясняют 61% дисперсии. В PC1 вносят вклад переменные "bwt", "gest",  "hospstay". В PC2 вносят вклад переменные "pltct" ,  "apg1"
+# 
+# Почему использовать колонку 'dead' для выводов об ассоциации с выживаемостью некорректно? 
+#   потомучто PCA показывает не ассоциацию, а изменяет перемеенные, находя наибольшую дисперсию. 
+
+
+```
+
+
+## Задание 11.	
+
+11.	Приведите ваши данные к размерности в две колонки через UMAP. Сравните результаты отображения точек между алгоритмами PCA и UMAP.
+```{r}
+umap_prep <- recipe(~., data = very_low_birthw2_outlier %>% 
+                      select(where(is.numeric))
+                    ) %>% # "техническая" строка, нужная для работы фреймворка tidymodels
+  step_normalize(all_predictors()) %>% # нормируем все колонки
+  step_umap(all_predictors()) %>%  # проводим в UMAP. Используем стандартные настройки. Чтобы менять ключевой параметр (neighbors), нужно больше погружаться в машинное обучение
+  prep() %>%  # "техническая" строка, нужная для работы фреймворка tidymodels. Мы выполняем все степы выше 
+  juice() # Финальная строка - приводим результаты UMAP к стандартизированному датасету
+```
+
+
+```{r}
+
+  ggplot(umap_prep, 
+         aes(x = UMAP1, y = UMAP2)) +
+  geom_point(aes(color = very_low_birthw2_outlier$dead),
+         
+             alpha = 0.7, size = 2) +
+  labs(color = "dead") 
+# И что же мы тут получили?
+```
+
+
+## Задание 12.	
+12.	Давайте самостоятельно увидим, что снижение размерности – это группа методов, славящаяся своей неустойчивостью. Измените основные параметры UMAP (n_neighbors и min_dist) и проанализируйте, как это влияет на результаты.
+
+```{r}
+
+```
+
+
+
+## Задание 13.	
+13.	Давайте самостоятельно увидим, что снижение размерности – это группа методов, славящаяся своей неустойчивостью. Пермутируйте 50% и 100% колонки 'bwt'. Проведите PCA и UMAP анализ. Наблюдаете ли вы изменения в куммулятивном проценте объяснённой вариации PCA? В итоговом представлении данных на биплотах для PCA? Отличается ли визуализация данных?
+
+```{r}
+
+```
+
+
+
+## Задание 14.	
+
+14.	Давайте проведем анализ чувствительности. Проведите анализ, как в шагах 4-6 для оригинального с удалением всех строк с пустыми значениями (т.е. включая колонки с количеством пропущенных значений больше 100), а затем для оригинального датафрейма с импутированием пустых значений средним или медианой. Как отличаются получившиеся результаты? В чем преимущества и недостатки каждого подхода?
+```{r}
+very_low_birthw3 <- very_low_birthw %>%
+  select_if(function(x) sum(is.na(x)) < 100) %>%
+  select(where(is.numeric)& dead) %>% 
+    mutate(across(everything(), 
+                ~ replace_na(., median(., na.rm = TRUE))))
+```
+
+
+
+## Задание 15.	
+
+15.	Давайте проведем анализ чувствительности. Сделайте то же, что в пункте 14, но для методов снижения размерности – PCA и UMAP. Проанализируйте результаты.
+```{r}
+
+```
