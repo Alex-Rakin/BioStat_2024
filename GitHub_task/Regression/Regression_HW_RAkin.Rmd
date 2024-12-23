@@ -1,0 +1,369 @@
+---
+title: "Регрессионный анализ_ДЗ_Ракин"
+subtitle: "Линейная регрессия"
+output:
+  html_document:
+    keep_md: true
+    toc: yes
+    toc_depth: 3
+    toc_float: true
+editor_options:
+  chunk_output_type: inline
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+library(tidyverse)
+library(gtsummary)
+library(modelsummary)
+library(GGally)
+library(broom)
+library(ggfortify)
+library(ggResidpanel)
+library(performance)
+library(lmtest)
+library(sandwich)
+library(emmeans)
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, error = FALSE)
+```
+
+```{r}
+# загрузка датасета
+HW_data <- readxl::read_xlsx("HW_data.xlsx")
+
+# Заменим значения в дихотомических переменных 2 на 0
+HW_data <- HW_data %>% 
+  mutate(
+    DRQSDIET = recode(DRQSDIET, "2" = 0),
+    DRD340 = recode(DRD340, "2" = 0),
+    DRD360 = recode(DRD360, "2" = 0),
+    ALQ101 = recode(ALQ101, "2" = 0),
+    SMQ020 = recode(SMQ020, "2" = 0),
+    PAQ605 = recode(PAQ605, "2" = 0),
+    PAQ620 = recode(PAQ620, "2" = 0),
+    PAQ635 = recode(PAQ635, "2" = 0),
+    PAQ650 = recode(PAQ650, "2" = 0),
+    PAQ665 = recode(PAQ665, "2" = 0),
+    MCQ010 = recode(MCQ010, "2" = 0),
+    MCQ035 = recode(MCQ035, "2" = 0),
+    MCQ160C = recode(MCQ160C, "2" = 0),
+    MCQ160B = recode(MCQ160B, "2" = 0),
+    MCQ160E = recode(MCQ160E, "2" = 0),
+    MCQ160F = recode(MCQ160F, "2" = 0),
+    MCQ160M = recode(MCQ160M, "2" = 0),
+    MCQ170M = recode(MCQ170M, "2" = 0),
+    MCQ160O = recode(MCQ160O, "2" = 0),
+    MCQ220 = recode(MCQ220, "2" = 0),
+    BPQ020 = recode(BPQ020, "2" = 0),
+    BPQ050A = recode(BPQ050A, "2" = 0),
+    DIQ010 = recode(DIQ010, "2" = 0),
+    DIQ070 = recode(DIQ070, "2" = 0),
+    across(c(DRQSDIET, DRD340 , DRD360 , ALQ101 , SMQ020 , PAQ605 , PAQ620 , PAQ635 , PAQ650 , PAQ665 , MCQ010 , MCQ035 , MCQ160C, MCQ160B, MCQ160E, MCQ160F, MCQ160M, MCQ170M, MCQ160O, MCQ220 , BPQ020 , BPQ050A, DIQ010 , DIQ070), as.factor)
+  )
+
+
+
+```
+
+## Задание 01.
+
+1.  Каким образом вы будете оценивать физическую активность
+    респондентов? Есть ли у вас предварительные предположения
+    относительно того, каким образом выбранный вами показатель может
+    быть ассоциирован с гликированным гемоглобином?
+
+**ОТВЕТ:** физичекая активность будет измеряна в минутах м учетом
+коэфициентов:
+
+k = 1, для умеренной активности k = 1.5 для пешей прогулки/ езде на
+велосипеде k = 2, для высокой активности.
+<!-- k= -0.5 для сидячей активности (Движение - это жизнь, сидячий образ жизни неполезен!!!) -->
+уберем , так ака получаются "плохие" модели
+
+уровень гликированного гемоглобина будет обратно пропорционален
+физичекой активности
+
+```{r}
+HW_data <- HW_data %>% 
+  mutate(
+    Physical_activity = PAQ610*PAD615*2+PAQ625*PAD630*2+PAQ640*PAD645*1.5+PAQ655*PAD660*2+PAQ670*PAD675*1)
+ 
+
+```
+
+## Задание 02.
+
+2.  Ковариаты для каких показателей вы включите в модель для коррекции
+    эффекта физической активности в отношении гликированного
+    гемоглобина? Каким образом вы будете их оценивать по имеющимся
+    данным? Бонусное задание: для представленного DAG'а укажите роль
+    каждого показателя по отношению к изучаемой ассоциации между
+    физической активностью и гликированным гемоглобином (конфаундеры (в
+    том числе proxy конфаундеры), коллайдеры, медиаторы)
+
+**ОТВЕТ:**
+
+Буду использовать следующме ковариаты 1 Аge (переменная RIAGENDR) 2
+Comorbidities (переменные MCQ010 , MCQ035 , MCQ160C, MCQ160B, MCQ160E,
+MCQ160F, MCQ160M, MCQ170M, MCQ160O, MCQ220 , BPQ020 , DIQ010. Создадим
+новую дихотомическую переменную ) 3 Education (переменная DMDEDUC2) 4
+Family income (переменная INDFMIN2) 5 Race (переменная RIDRETH3) 6 Sex
+(переменная RIAGENDR ) 7 Smoking (переменная SMQ040)
+
+Age - конфаундер(через Comorbidities), Comorbidities - конфаундер,
+Education - конфаундер (через Smoking), Family income - конфаундер(через
+Smoking), Race - конфаундер, Sex - конфаундер, Smoking -
+прокси-конфаундер, Blood pressure - коллайдер, Diabetic medication -
+коллайдер (через Comorbidities, **хотя здесь под вопросом**), BMI -
+медиатор, Marital status - предшественник воздействия
+
+```{r}
+# Создадим датасет с перечислинными переменными
+lm_data <- HW_data %>%
+  mutate(
+    gliHg = LBXGH,
+    Physical_activity = PAQ610 * PAD615 * 2 + PAQ625 * PAD630 * 2 + PAQ640 *
+      PAD645 * 1.5 + PAQ655 * PAD660 * 2 + PAQ670 * PAD675 * 1 , 
+    # убрал + PAD680 * (-0.5)
+    Age = RIDAGEYR,
+    Comorbidities = as.factor(
+      ifelse(
+        MCQ010 == 1 |
+          MCQ035 == 1 |
+          MCQ160C == 1 |
+          MCQ160B == 1 |
+          MCQ160E == 1 |
+          MCQ160F == 1 |
+          MCQ160M == 1 |
+          MCQ160O == 1 | MCQ220 == 1 | BPQ020 == 1 | DIQ010 == 1,
+        1,
+        0
+      )
+    ),
+    Education = as.factor(DMDEDUC2),
+    Family_income = as.factor(INDFMIN2),
+    Race = factor(
+      RIDRETH3,
+      levels = c(1, 2, 3, 4, 6, 7),
+      labels = c(
+        "Mexican American",
+        "Other Hispanic",
+        "Non-Hispanic White",
+        "Non-Hispanic Black",
+        "Non-Hispanic Asian",
+        "Other Race - Including Multi-Racial"
+      )
+    ),
+    Sex = factor(
+      RIAGENDR,
+      levels = c(1, 2),
+      labels = c("Male", "Female")
+    ),
+    Smoking = factor(
+      SMQ040,
+      levels = c(1, 2, 3),
+      labels = c("Every day", "Some days", "Not at all")
+    )
+  ) %>%
+  select(
+    c(
+      SEQN,
+      gliHg,
+      Physical_activity,
+      Age,
+      Comorbidities,
+      Education,
+      Family_income,
+      Race,
+      Sex,
+      Smoking
+    )
+  ) 
+
+
+```
+
+## Задание 03.
+
+3.  Проведите необходимый эксплораторный анализ перед оценкой модели.
+
+```{r}
+#  сделаем по функции, данной на занятии
+tbl_summary(
+  lm_data, include = -c(SEQN), 
+  type = list(all_continuous() ~ "continuous2"),
+  statistic = list(
+    all_continuous() ~ c("{mean} ({sd})", "{median} ({p25}-{p75})", "{min}-{max}")
+  )) %>%
+  modify_footnote(everything() ~ NA) %>%
+  bold_labels()
+# А что за вопросы возникли в таблице???
+
+```
+
+```{r, fig.height= 12, fig.width= 12}
+# 
+ggpairs(lm_data %>% select(-SEQN))
+
+
+```
+
+## Задание 04.
+
+4.  Оцените модель для зависимости гликированного гемоглобина от
+    выбранного вами показателя физической активности без ковариат и с
+    ними. Проведите необходимую диагностику этих моделей -- требует ли
+    что-либо коррекции и почему? В случае необходимости коррекции по
+    результатам диагностики сделайте ее.
+
+```{r}
+# модель без ковариат
+lm_no_cov <- lm(gliHg ~ Physical_activity, data = lm_data)
+
+
+summary(lm_no_cov)
+
+
+```
+
+```{r, fig.height= 16, fig.width= 12}
+# Диагностика модели
+check_model(lm_no_cov)
+
+# Что же, придется её корректировать, Multiple R-squared:  0.0001276
+```
+
+Нужна корректировка на : 1. гетероскедастичность (испоьзуем эстиматоры с
+коррекцией на гетероскедастичность: HC0 -- классическая коррекция, White
+standard errors)
+
+2.  Линейность модели (попробуем трансформировать переменную в степень)
+
+```{r, fig.height= 16, fig.width= 16}
+lm_no_cov2 <- lm(gliHg ~ Physical_activity+I(Physical_activity^2), data = lm_data)
+summary(lm_no_cov2)
+
+coeftest(lm_no_cov2, vcov. = vcovHC, type = "HC3")
+
+check_model(lm_no_cov2, vcov. = vcovHC, type = "HC3")
+
+
+# ВСе равно плохо
+
+```
+
+```{r}
+# сделаем модель с ковариатами
+lm_cov1 <- lm(gliHg ~ Physical_activity+ Age + Comorbidities + Education + Family_income + Race + Sex + Smoking, data = lm_data) 
+summary(lm_cov1)
+
+
+```
+
+```{r, fig.width=16, fig.height=16}
+# проверка модели
+check_model(lm_cov1)
+
+
+
+```
+
+Нужна корректировка на : 1. гетероскедастичность (испоьзуем эстиматоры с
+коррекцией на гетероскедастичность: HC0 -- классическая коррекция, White
+standard errors) 2. Линейность модели (попробуем трансформировать
+переменную в степень)
+
+```{r}
+lm_cov2 <- lm(gliHg ~ Physical_activity+I(Physical_activity^2)+ Age + Comorbidities + Education + Family_income + Race + Sex + Smoking, data = lm_data) 
+summary(lm_cov2)
+coeftest(lm_cov2, vcov. = vcovHC, type = "HC1")
+```
+
+```{r, fig.width=16, fig.height=8}
+# проверка модели
+check_model(lm_cov2)
+check_model(lm_cov2, check ="vif")
+car::vif(lm_cov2)
+
+
+check_model(lm_cov2, vcov. = vcovHC, type = "HC1")
+
+
+```
+
+Ошибки все еще гетероскедастичны
+
+## Задание 05.
+
+5.  Представьте результаты оценки модели без ковариат и с ковариатами в
+    виде точечной и ин- тервальной оценки эффекта физической активности.
+    Дайте им словесную интерпретацию. Какие выводы мы можем сделать,
+    исходя из точечной оценки? А из интервальной? Как вы думаете, можно
+    ли считать эффект клинически значимым? Если затрудняетесь с ответом,
+    что бы вам помогло дать ответ на этот вопрос?
+
+```{r}
+
+tidy(lm_no_cov2, conf.int = TRUE)
+
+tidy(lm_cov2, conf.int = TRUE)
+```
+
+```         
+ТАк ка мы сделали трансформацию переменной теперь необходимо дать точную оценку оценку эффекта физической активности.
+
+точная оценка будет равна B_1+B_2+2*B_2*Physical_activity, где B_1 коэф при переменной Physical_activity, а B_2 - Physical_activity^2.
+-1.721754e-04   + 2.676621e-08+2*2.676621e-08*Physical_activity
+
+В модели с ковариатами значение будет 
+-6.145836e-05   + 1.585850e-08 + 2* 1.585850e-08*Physical_activity.
+
+Что касается интервальной оценки, то в модели без ковариат 0  не входит в значения  ДИ коэффициентов регрессии, отвергаем гипотезу о равенстве коэфициентов 0.  
+
+В модели с ковариатами 0 входит в ДИ коэфициента при Physical_activity, не отвергаем гипотезу, что данный Коэффициент равен 0.
+
+```
+
+## Задание 06.
+
+6.  Проверьте гипотезу об отсутствии ассоциации между физической
+    активностью и гликиро- ванным гемоглобином. Сделайте выводы по
+    полученным результатам.
+
+```{r}
+#  проверку можно сделать при помощи нахождения коррелияции или при помощи Хи-квадрата.
+cor.test(lm_data$gliHg, (lm_data$Physical_activity))
+
+chisq.test(x=lm_data$Physical_activity, y=lm_data$gliHg)
+```
+
+Корреляция: ДИ пересекает 0, Н0 не отвергаем, отсутствует ассоциации
+между физической активностью и гликированным гемоглобином. Хи-квадрат:
+p-value = 1, Н0 не отвергаем, отсутствует ассоциации между физической
+активностью и гликированным гемоглобином.
+
+## Задание 07.
+
+7.  Является ли пол модификатором эффекта физической активности в
+    отношении гликированного гемоглобина? Если да, каков эффект для
+    мужчин и женщин и насколько он отличается между ними?
+
+    **ОТВЕТ:** пол модификатором эффекта физической активности не является, ДИ пересекает 0.
+    
+    
+
+## Задание 08.
+
+8.  Соответствуют ли полученные вами результаты вашему исходному
+    предположению? Как ме- няется оценка эффекта физической активности
+    при добавлении ковариат в модель и почему? Бонусное задание: оцените
+    прямой (direct) эффект физической активности на гликирован- ный
+    гемоглобин (со всей необходимой диагностикой и коррекциями). Как он
+    отличается от общего (total) эффекта? В чем причина/ механизм этих
+    различий?
+    
+    
+    
+    
